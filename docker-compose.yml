@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  bot:
+    build: .
+    volumes:
+      - ./downloads:/app/downloads
+    environment:
+      - TELEGRAM_BOT_TOKEN=6790045228:AAFJ-Jf2ZSC8L8zx2lE_Jok51SbcRatm4Dg
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
