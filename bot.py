@@ -1,11 +1,7 @@
 import telebot
 import yt_dlp
 import os
-from pydub import AudioSegment
-import logging
-
-# Настраиваем логирование
-logging.basicConfig(level=logging.INFO)
+import subprocess
 
 # Получаем токен из переменной окружения
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -21,9 +17,42 @@ if not os.path.exists(DOWNLOAD_DIR):
 
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 
+
+def split_audio(filename, max_file_size):
+    output_files = []
+    file_size = os.path.getsize(filename)
+
+    if file_size <= max_file_size:
+        return [filename]
+
+    audio_duration = float(subprocess.check_output(
+        ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1',
+         filename]
+    ).strip())
+
+    part_duration = audio_duration / (file_size // max_file_size + 1)
+
+    base, ext = os.path.splitext(filename)
+    index = 0
+    start_time = 0
+
+    while start_time < audio_duration:
+        part_filename = f"{base}_part{index + 1}{ext}"
+        command = [
+            'ffmpeg', '-i', filename, '-ss', str(start_time), '-t', str(part_duration), part_filename
+        ]
+        subprocess.run(command)
+        output_files.append(part_filename)
+        start_time += part_duration
+        index += 1
+
+    return output_files
+
+
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
     bot.reply_to(message, "Привет! Отправь мне ссылку на YouTube видео, и я скачаю для тебя аудио.")
+
 
 @bot.message_handler(func=lambda message: True)
 def download_audio(message):
@@ -46,38 +75,18 @@ def download_audio(message):
             title = info_dict.get('title', None)
             filename = ydl.prepare_filename(info_dict).replace('.webm', '.mp3').replace('.m4a', '.mp3')
 
-        # Полный путь к файлу
-        filename = os.path.join(DOWNLOAD_DIR, os.path.basename(filename))
-        file_size = os.path.getsize(filename)
-        logging.info(f"Downloaded file size: {file_size}")
+        audio_files = split_audio(filename, MAX_FILE_SIZE)
 
-        if file_size > MAX_FILE_SIZE:
-            audio = AudioSegment.from_mp3(filename)
-            duration = len(audio)
-            logging.info(f"Audio duration: {duration} ms")
-            part_duration = int((MAX_FILE_SIZE / file_size) * duration)
-            logging.info(f"Part duration: {part_duration} ms")
-            parts = [audio[i:i + part_duration] for i in range(0, len(audio), part_duration)]
-
-            for i, part in enumerate(parts):
-                part_filename = f"{filename[:-4]}_part{i + 1}.mp3"
-                logging.info(f"Exporting part {i + 1} to {part_filename}")
-                part.export(part_filename, format="mp3")
-                with open(part_filename, 'rb') as audio_part:
-                    logging.info(f"Sending part {i + 1}")
-                    bot.send_audio(message.chat.id, audio_part)
-                os.remove(part_filename)
-        else:
-            with open(filename, 'rb') as audio:
-                logging.info("Sending full audio")
+        for audio_file in audio_files:
+            with open(audio_file, 'rb') as audio:
                 bot.send_audio(message.chat.id, audio)
+            os.remove(audio_file)
 
-        os.remove(filename)
         bot.reply_to(message, "Аудио успешно загружено и отправлено!")
 
     except Exception as e:
-        logging.error(f"Error: {str(e)}")
         bot.reply_to(message, f"Произошла ошибка: {str(e)}")
+
 
 # Запускаем бота
 bot.polling()
